@@ -120,8 +120,13 @@ torch.manual_seed(1337 + seed_offset)
 torch.backends.cuda.matmul.allow_tf32 = True  # allow tf32 on matmul
 torch.backends.cudnn.allow_tf32 = True  # allow tf32 on cudnn
 device_type = "cuda" if "cuda" in device else "cpu"  # for later use in torch.autocast
-# note: float16 data type will automatically use a GradScaler
-ptdtype = {"float32": torch.float32, "bfloat16": torch.bfloat16, "float16": torch.float16}[dtype]
+# Determine the desired data type
+dtype = "float16"  # Change this to "float16" to use float16 instead of bfloat16
+
+# Determine the corresponding PyTorch data type
+ptdtype = torch.float16 if dtype == "float16" else torch.float32
+
+# Use float16 data type for autocasting
 ctx = (
     nullcontext()
     if device_type == "cpu"
