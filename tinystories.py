@@ -1,7 +1,3 @@
-"""
-Download, preprocess and serve the TinyStories dataset as a DataLoader.
-"""
-
 import argparse
 import glob
 import json
@@ -37,36 +33,20 @@ def download_file(url: str, fname: str, chunk_size=1024):
             size = file.write(data)
             bar.update(size)
 
-
 def download():
     """Downloads the TinyStories dataset to DATA_CACHE_DIR"""
     os.makedirs(DATA_CACHE_DIR, exist_ok=True)
 
     # download the TinyStories dataset, unless it's already downloaded
-    data_url = "https://huggingface.co/datasets/roneneldan/TinyStories/resolve/main/TinyStories_all_data.tar.gz"
-    data_filename = os.path.join(DATA_CACHE_DIR, "TinyStories_all_data.tar.gz")
+    data_url = "https://storytelling-m5a9.onrender.com/stories"
+    data_filename = os.path.join(DATA_CACHE_DIR, "Kinyastories.json")
     if not os.path.exists(data_filename):
         print(f"Downloading {data_url} to {data_filename}...")
         download_file(data_url, data_filename)
     else:
         print(f"{data_filename} already exists, skipping download...")
 
-    # unpack the tar.gz file into all the data shards (json files)
-    data_dir = os.path.join(DATA_CACHE_DIR, "TinyStories_all_data")
-    if not os.path.exists(data_dir):
-        os.makedirs(data_dir, exist_ok=True)
-        print(f"Unpacking {data_filename}...")
-        os.system(f"tar -xzf {data_filename} -C {data_dir}")
-    else:
-        print(f"{data_dir} already exists, skipping unpacking...")
-
-    # print a single example just for debugging and such
-    shard_filenames = sorted(glob.glob(os.path.join(data_dir, "*.json")))
-    with open(shard_filenames[0], "r") as f:
-        data = json.load(f)
     print("Download done.")
-    print(f"Number of shards: {len(shard_filenames)}")
-    print(f"Example story:\n{data[0]}")
 
 def train_vocab(vocab_size):
     """
@@ -76,78 +56,74 @@ def train_vocab(vocab_size):
     """
     assert vocab_size > 0, "Vocab size must be positive"
 
-    # output file prefix path for sentencepiece
+    # Output file prefix path for sentencepiece
     prefix = os.path.join(DATA_CACHE_DIR, f"tok{vocab_size}")
 
-    # how many shards we'll use for vocab training, kept low for efficiency
-    num_shards = 10
+    # Read the JSON file containing the stories
+    json_file = os.path.join(DATA_CACHE_DIR, "Kinyastories.json")
+    with open(json_file, "r") as f:
+        stories = json.load(f)
 
-    # 1) export a large chunk of text as a single text file tiny.txt
-    tiny_file = os.path.join(DATA_CACHE_DIR, "tiny.txt")
-    data_dir = os.path.join(DATA_CACHE_DIR, "TinyStories_all_data")
-    shard_filenames = sorted(glob.glob(os.path.join(data_dir, "*.json")))
-
-    print(f"Writing temporary file {tiny_file} with {num_shards} shards...")
-    with open(tiny_file, "w", encoding="utf-8") as of:
-        for shard in tqdm(shard_filenames[:num_shards]):
-            with open(shard, "r") as f:
-                data = json.load(f)
-            for example in data:
-                text = example["story"]
-                text = text.strip()
-                of.write(text + "\n")
-    print(f"Size is: {os.path.getsize(tiny_file) / 1024 / 1024:.2f} MB")
-
-    # 2) train the sentencepiece model
-    print("Will now train the vocab...")
-    spm.SentencePieceTrainer.train(input=tiny_file,
-                                   model_prefix=prefix,
-                                   model_type="bpe",
-                                   vocab_size=vocab_size,
-                                   self_test_sample_size=0,
-                                   input_format="text",
-                                   character_coverage=1.0,
-                                   num_threads=os.cpu_count(),
-                                   split_digits=True,
-                                   allow_whitespace_only_pieces=True,
-                                   byte_fallback=True,
-                                   unk_surface=r" \342\201\207 ",
-                                   normalization_rule_name="identity")
-
-    # 3) optional cleanup, ask the user if they'd like to delete tiny.txt
-    dec = input(f"Delete the temporary file {tiny_file}? [y/N] ")
-    if dec.lower() == "y":
-        os.remove(tiny_file)
-        print(f"Deleted {tiny_file}")
+    # Write each story to a temporary text file and train the tokenizer
+    temp_text_file = f"temp_story.txt"
+    for i, story in tqdm(enumerate(stories)):
+        text = story["story_text"].strip()
+        # Write the text to a temporary file
+       
+        with open(temp_text_file, "a", encoding="utf-8") as temp_f:
+            temp_f.write(text)
+        
+        # # Remove the temporary text file
+        # os.remove(temp_text_file)
+     # Train the sentencepiece model using the temporary text file
+    spm.SentencePieceTrainer.train(input=temp_text_file,
+                                       model_prefix=prefix,
+                                       model_type="bpe",
+                                       vocab_size=vocab_size,
+                                       self_test_sample_size=0,
+                                       input_format="text",
+                                       character_coverage=1.0,
+                                       num_threads=os.cpu_count(),
+                                       split_digits=True,
+                                       allow_whitespace_only_pieces=True,
+                                       byte_fallback=True,
+                                       unk_surface=r" \342\201\207 ",
+                                       normalization_rule_name="identity")
 
     print(f"Trained tokenizer is in {prefix}.model")
     print("Done.")
 
 
-def process_shard(args, vocab_size):
-    shard_id, shard = args
+
+def process_shard(json_file, vocab_size):
     tokenizer_model = get_tokenizer_model_path(vocab_size)
+    print("Tokenizer model: ", tokenizer_model)
     enc = Tokenizer(tokenizer_model)
-    with open(shard, "r") as f:
-        data = json.load(f)
+    print("process_shard got called....")
+    # Read the JSON file containing stories
+    with open(json_file, "r") as f:
+        stories = json.load(f)
     all_tokens = []
-    for example in tqdm(data, position=shard_id):
-        text = example["story"]
+    # Tokenize each story
+    for i, story in enumerate(stories):
+        text = story["story_text"]
         text = text.strip()  # get rid of leading/trailing whitespace
         tokens = enc.encode(text, bos=True, eos=False)  # encode the text, use BOS
+        print(f"Encoded story {story['story_title']} ")
+
+        # convert to uint16 nparray
         all_tokens.extend(tokens)
+        
     # convert to uint16 nparray
     all_tokens = np.array(all_tokens, dtype=np.uint16)
     # calculate the output filename
     if vocab_size == 0:
         # if we're using Llama 2, just save the tokenized file in the same dir
-        tokenized_filename = shard.replace(".json", ".bin")
+        tokenized_filename = os.path.join(DATA_CACHE_DIR, "all_stories.bin")
     else:
         # save .bin files into a new tok{N} directory
         bin_dir = os.path.join(DATA_CACHE_DIR, f"tok{vocab_size}")
-        shard_basename = os.path.basename(shard)
-        bin_basename = shard_basename.replace(".json", ".bin")
-        tokenized_filename = os.path.join(bin_dir, bin_basename)
+        tokenized_filename = os.path.join(bin_dir, "all_stories.bin")
     # write the bytes
     with open(tokenized_filename, "wb") as f:
         f.write(all_tokens.tobytes())
@@ -155,21 +131,27 @@ def process_shard(args, vocab_size):
     avg_seq_len = all_tokens.size / ((all_tokens == 1).sum())
     print(f"Saved {tokenized_filename}, average seqlen: {avg_seq_len:.2f}")
 
-
 def pretokenize(vocab_size):
-    # iterate the shards and tokenize all of them one by one
-    data_dir = os.path.join(DATA_CACHE_DIR, "TinyStories_all_data")
-    shard_filenames = sorted(glob.glob(os.path.join(data_dir, "*.json")))
+    """
+    Tokenizes each story in the TinyStories dataset.
+    The tokenized files will be saved in the corresponding tok{N} directories,
+    where N is the vocab size.
+    """
+    # Define the input JSON file containing stories
+    json_file = os.path.join(DATA_CACHE_DIR, "Kinyastories.json")
+    print("JSON file: ", json_file)
+
+    # Create the output directory for tokenized files
     if vocab_size > 0:
-        # .bin files will be saved into tok{N} directory, create it once here
         bin_dir = os.path.join(DATA_CACHE_DIR, f"tok{vocab_size}")
         os.makedirs(bin_dir, exist_ok=True)
+    print("Bin directory: ", bin_dir)
+    
+    process_shard(json_file, vocab_size)
 
-    # process all the shards in a process pool
-    fun = partial(process_shard, vocab_size=vocab_size)
-    with ProcessPoolExecutor() as executor:
-        executor.map(fun, enumerate(shard_filenames))
     print("Done.")
+
+
 
 
 class PretokDataset(torch.utils.data.IterableDataset):
@@ -231,6 +213,7 @@ def get_tokenizer_model_path(vocab_size):
     vocab_size = 0 designates the default Llama 2 tokenizer, in that case
     None is returned.
     """
+   
     if vocab_size == 0:
         return None
     else:
