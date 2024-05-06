@@ -182,23 +182,30 @@ class PretokDataset(torch.utils.data.IterableDataset):
             # the .bin files are in tok{N} directory
             bin_dir = os.path.join(DATA_CACHE_DIR, f"tok{self.vocab_size}")
             shard_filenames = sorted(glob.glob(os.path.join(bin_dir, "*.bin")))
-        # train/test split. let's use only shard 0 for test split, rest train
-        shard_filenames = shard_filenames[1:] if self.split == "train" else shard_filenames[:1]
-        assert len(shard_filenames)>0, f"No bin files found in {bin_dir}"
+        # Train/test split
+        if self.split == "train":
+            # Exclude a portion for validation
+            validation_size = int(len(shard_filenames) * 0.1)  # 10% for validation
+            shard_filenames = shard_filenames[validation_size:]
+        elif self.split == "val":
+            # Take a portion for validation
+            validation_size = int(len(shard_filenames) * 0.1)  # 10% for validation
+            shard_filenames = shard_filenames[:validation_size]
+        assert len(shard_filenames) > 0, f"No bin files found in {bin_dir}"
         while True:
             rng.shuffle(shard_filenames)
             for shard in shard_filenames:
-                # open the dataset for reading but keep it on disk with memmap
+                # Open the dataset for reading but keep it on disk with memmap
                 m = np.memmap(shard, dtype=np.uint16, mode="r")
                 num_batches = len(m) // self.max_seq_len
-                num_batches -= 1  # drop the last partial batch
-                assert num_batches > 0, "this shard is way too small? investigate."
+                num_batches -= 1  # Drop the last partial batch
+                assert num_batches > 0, "This shard is way too small? Investigate."
                 ixs = list(range(num_batches))
                 rng.shuffle(ixs)
                 for ix in ixs:
                     start = ix * self.max_seq_len
                     end = start + self.max_seq_len + 1
-                    # calling .astype will copy the data into a new numpy array, now in RAM
+                    # Calling .astype will copy the data into a new numpy array, now in RAM
                     chunk = torch.from_numpy((m[start:end]).astype(np.int64))
                     x = chunk[:-1]
                     y = chunk[1:]
