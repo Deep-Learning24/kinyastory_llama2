@@ -31,6 +31,53 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from tinystories import Task
 from export import model_export
 
+
+def load_available_checkpoints(checkpoint_dir, model, optimizer, location):
+    """
+    Load and validate available checkpoints in the specified directory into the current model and optimizer.
+
+    Args:
+        checkpoint_dir (str): Directory containing checkpoints.
+        model (nn.Module): The model to load the checkpoints into.
+        optimizer (torch.optim.Optimizer): The optimizer to load the checkpoint's state into.
+        location (str or torch.device): Device location to load the model and optimizer (e.g., "cpu", "cuda", or torch.device object).
+
+    Returns:
+        List[str]: List of available checkpoint filenames.
+    """
+    # Initialize list to store available checkpoints
+    available_checkpoints = []
+
+    # Check if the checkpoint directory exists
+    if not os.path.isdir(checkpoint_dir):
+        print(f"Checkpoint directory '{checkpoint_dir}' not found.")
+        return available_checkpoints
+
+    # Iterate over files in the checkpoint directory
+    for filename in os.listdir(checkpoint_dir):
+        # Check if the file is a checkpoint (e.g., ends with ".pt")
+        if filename.endswith(".pt"):
+            checkpoint_path = os.path.join(checkpoint_dir, filename)
+            # Load the checkpoint
+            checkpoint = torch.load(checkpoint_path, map_location=location)
+            # Load the model state_dict from the checkpoint
+            model.load_state_dict(checkpoint['model'])
+            # Load the optimizer state_dict from the checkpoint
+            optimizer.load_state_dict(checkpoint['optimizer'])
+            # Add the checkpoint filename to the list of available checkpoints
+            available_checkpoints.append(checkpoint_path)
+
+    # Print the list of available checkpoints
+    print("Available Checkpoints:")
+    for checkpoint in available_checkpoints:
+        print(checkpoint)
+
+    return available_checkpoints
+
+
+
+
+
 # -----------------------------------------------------------------------------
 # I/O
 out_dir = "out"
@@ -248,6 +295,9 @@ def get_lr(it):
 if wandb_log and master_process:
     import wandb
     wandb.init(project=wandb_project, name=wandb_run_name, config=config)
+    
+
+load_available_checkpoints(out_dir, model,optimizer,device)
 
 # training loop
 train_batch_iter = iter_batches(split="train")
