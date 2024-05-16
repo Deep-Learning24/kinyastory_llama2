@@ -36,7 +36,7 @@ nltk.download('words')
 DATA_CACHE_DIR = "data"
 common_english_words = set(words.words())
 # Define a regex pattern that keeps only English letters, numbers, basic punctuation, and spaces
-pattern = re.compile("[^a-zA-Z0-9\s\.,!?;:()\'\"\-\—]")
+pattern = re.compile(r"[^a-zA-Z0-9\s\.,!?;:()\'\"\-\—]")
 def download_file(url: str, fname: str, chunk_size=1024):
     """Helper function to download a file from a given url"""
     resp = requests.get(url, stream=True)
