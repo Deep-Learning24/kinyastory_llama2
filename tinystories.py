@@ -22,8 +22,21 @@ import numpy as np
 import torch
 from torch.utils.data import IterableDataset
 
-DATA_CACHE_DIR = "data"
+import pandas as pd
+from tqdm import tqdm
+import nltk
 
+import re
+
+from nltk.corpus import words
+
+nltk.download('words')
+
+
+DATA_CACHE_DIR = "data"
+common_english_words = set(words.words())
+# Define a regex pattern that keeps only English letters, numbers, basic punctuation, and spaces
+pattern = re.compile("[^a-zA-Z0-9\s\.,!?;:()\'\"\-\—]")
 def download_file(url: str, fname: str, chunk_size=1024):
     """Helper function to download a file from a given url"""
     resp = requests.get(url, stream=True)
@@ -54,9 +67,12 @@ def download():
 
     print("Download done.")
 
-def train_vocab(vocab_size):
+
+def train_vocab(vocab_size, additional_directory=None):
     """
-    Trains a custom sentencepiece tokenizer on the TinyStories dataset.
+    Trains a custom sentencepiece tokenizer on the TinyStories dataset and
+    additional data (if provided).
+
     The custom tokenizer files will be saved in DATA_CACHE_DIR/tok{N} directories,
     where N is the vocab size. This is also where the pretok .bin files will go.
     """
@@ -64,44 +80,85 @@ def train_vocab(vocab_size):
 
     # Output file prefix path for sentencepiece
     prefix = os.path.join(DATA_CACHE_DIR, f"tok{vocab_size}")
+    
 
     # Read the JSON file containing the stories
     json_file = os.path.join(DATA_CACHE_DIR, "Kinyastories.json")
     with open(json_file, "r") as f:
         stories = json.load(f)
 
-    # Write each story to a temporary text file and train the tokenizer
-    temp_text_file = f"temp_story.txt"
-    for i, story in tqdm(enumerate(stories)):
-        text = story["story_text"].strip()
-        # Write the text to a temporary file
-       
-        with open(temp_text_file, "a", encoding="utf-8") as temp_f:
-            temp_f.write(text)
-        
-        # # Remove the temporary text file
-        # os.remove(temp_text_file)
-     # Train the sentencepiece model using the temporary text file
-    spm.SentencePieceTrainer.train(input=temp_text_file,
-                                       model_prefix=prefix,
-                                       model_type="bpe",
-                                       vocab_size=vocab_size,
-                                       self_test_sample_size=0,
-                                       input_format="text",
-                                       character_coverage=1.0,
-                                       num_threads=os.cpu_count(),
-                                       split_digits=True,
-                                       allow_whitespace_only_pieces=True,
-                                       byte_fallback=True,
-                                       unk_surface=r" \342\201\207 ",
-                                       normalization_rule_name="identity")
+    # Read additional data files (if provided)
+    additional_data = []
+    if additional_directory:
+        additional_files = os.listdir(additional_directory)
+        for file_name in additional_files:
+            if file_name == '.ipynb_checkpoints':
+                continue
+            file_path = os.path.join(additional_directory, file_name)
+            if file_name.endswith('.csv'):
+                # For CSV files, extract the content column
+                df = pd.read_csv(file_path)
+                if 'content' in df.columns:
+                    additional_data.extend(df['content'].tolist())
+            elif file_name == 'kin_community_2017_30K-sentences.txt':
+                # For kin_community_2017_30K-sentences.txt, ignore the first part and extract text after the first tab
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+                    for line in lines:
+                        parts = line.strip().split('\t')
+                        if len(parts) > 1:
+                            additional_data.append(str(parts[1]))
+                        else:
+                            additional_data.append(str(parts[0]))
+            else:
+                # For other text files, read them like f.readlines()
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    additional_data.extend(f.readlines())
+
+    # Write each story and additional data to a temporary text file and train the tokenizer
+    temp_text_file = os.path.join(DATA_CACHE_DIR, "temp_story.txt")
+     
+
+    with open(temp_text_file, "a", encoding="utf-8") as temp_f:
+        for story in tqdm(stories):
+            text = story["story_text"].strip()
+            # Remove non-English characters
+            text = pattern.sub('', text)
+            # Filter out common English words and join the rest
+            text = ' '.join([word for word in text.split() if word not in common_english_words])
+            temp_f.write(text + '\n')
+
+        for data in additional_data:
+            # Convert the data to string, remove non-English characters, and filter words
+            text = str(data).strip()
+            text = pattern.sub('', text)
+            text = ' '.join([word for word in text.split() if word not in common_english_words])
+            temp_f.write(text + '\n')
+
+    # Train the sentencepiece model using the temporary text file
+    spm.SentencePieceTrainer.train(
+        input=temp_text_file,
+        model_prefix=prefix,
+        model_type="bpe",
+        vocab_size=vocab_size,
+        self_test_sample_size=0,
+        input_format="text",
+        character_coverage=1.0,
+        num_threads=os.cpu_count(),
+        split_digits=True,
+        allow_whitespace_only_pieces=True,
+        byte_fallback=True,
+        unk_surface=r" \342\201\207 ",
+        normalization_rule_name="identity",
+    )
 
     print(f"Trained tokenizer is in {prefix}.model")
     print("Done.")
 
+    # Remove the temporary text file
+    os.remove(temp_text_file)
 
-
-def process_shard(json_file, vocab_size):
+def process_shard(json_file, vocab_size,additional_directory=None):
     tokenizer_model = get_tokenizer_model_path(vocab_size)
     print("Tokenizer model: ", tokenizer_model)
     enc = Tokenizer(tokenizer_model)
@@ -109,16 +166,55 @@ def process_shard(json_file, vocab_size):
     # Read the JSON file containing stories
     with open(json_file, "r") as f:
         stories = json.load(f)
+        
+    
+    # Read additional data files (if provided)
+    additional_data = []
+    if additional_directory:
+        additional_files = os.listdir(additional_directory)
+        for file_name in additional_files:
+            if file_name == '.ipynb_checkpoints':
+                continue
+            file_path = os.path.join(additional_directory, file_name)
+            if file_name.endswith('.csv'):
+                # For CSV files, extract the content column
+                df = pd.read_csv(file_path)
+                if 'content' in df.columns:
+                    additional_data.extend(df['content'].tolist())
+            elif file_name == 'kin_community_2017_30K-sentences.txt':
+                # For kin_community_2017_30K-sentences.txt, ignore the first part and extract text after the first tab
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    lines = f.readlines()
+                    for line in lines:
+                        parts = line.strip().split('\t')
+                        if len(parts) > 1:
+                            additional_data.append(parts[1])
+                        else:
+                            additional_data.append(parts[0])
+            else:
+                # For other text files, read them like f.readlines()
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    additional_data.extend(f.readlines())
+            
     all_tokens = []
     # Tokenize each story
     for i, story in enumerate(stories):
         text = story["story_text"]
         text = text.strip()  # get rid of leading/trailing whitespace
+        text = pattern.sub('', text)
+        text = ' '.join([word for word in text.split() if word not in common_english_words])
         tokens = enc.encode(text, bos=True, eos=False)  # encode the text, use BOS
         print(f"Encoded story {story['story_title']} ")
 
         # convert to uint16 nparray
         all_tokens.extend(tokens)
+    # Tokenize the additional text (if provided)
+    if additional_directory:
+        for text in additional_data:
+            text = pattern.sub('', str(text))
+            text = ' '.join([word for word in text.split() if word not in common_english_words])
+            tokens = enc.encode(str(text), bos=True, eos=False)
+            all_tokens.extend(tokens)
         
     # convert to uint16 nparray
     all_tokens = np.array(all_tokens, dtype=np.uint16)
@@ -153,12 +249,9 @@ def pretokenize(vocab_size):
         os.makedirs(bin_dir, exist_ok=True)
     print("Bin directory: ", bin_dir)
     
-    process_shard(json_file, vocab_size)
+    process_shard(json_file, vocab_size,additional_directory=f"{DATA_CACHE_DIR}/kinyastories")
 
     print("Done.")
-
-
-
 
 
 
@@ -185,7 +278,7 @@ class PretokDataset(IterableDataset):
 
         # Determine the bin file paths based on vocab source
         if self.vocab_source == "llama2":
-            bin_dir = os.path.join(DATA_CACHE_DIR, "TinyStories_all_data")
+            bin_dir = os.path.join(DATA_CACHE_DIR, "tok4096")
             shard_filenames = sorted(glob.glob(os.path.join(bin_dir, "*.bin")))
         elif self.vocab_source == "custom":
             bin_dir = os.path.join(DATA_CACHE_DIR, f"tok{self.vocab_size}")
@@ -197,6 +290,7 @@ class PretokDataset(IterableDataset):
         if self.split == "train":
             # Exclude a portion for validation
             total_data_size = os.path.getsize(shard_filenames[0])  # Get the size of the file in bytes
+            print("total_data_size: ",total_data_size)
             validation_size = int(total_data_size * 0.1)  # 10% for validation
             with open(shard_filenames[0], "rb") as file:
                 file.seek(validation_size)  # Move the file pointer to the validation split point
@@ -205,7 +299,9 @@ class PretokDataset(IterableDataset):
         elif self.split == "val":
             # Take a portion for validation
             total_data_size = os.path.getsize(shard_filenames[0])  # Get the size of the file in bytes
+           
             validation_size = int(total_data_size * 0.1)  # 10% for validation
+            print("validation_size: ",validation_size)
             with open(shard_filenames[0], "rb") as file:
                 val_data = file.read(validation_size)
             print("Validation data size: ", len(val_data))
@@ -252,6 +348,14 @@ class Task:
     @staticmethod
     def iter_batches(batch_size, device, num_workers=0, **dataset_kwargs):
         ds = PretokDataset(**dataset_kwargs)
+        # tokenizer_model = get_tokenizer_model_path(4096)
+        # print("Tokenizer model: ", tokenizer_model)
+        # enc = Tokenizer(tokenizer_model)
+        # for i, (x, y) in enumerate(ds):
+        #     if i == 5:  # Print only the first 5 samples
+        #         break
+        #     print("Sample Input:", enc.decode(x.tolist()))
+        #     print("Sample Output:", enc.decode(y.tolist()))
         dl = torch.utils.data.DataLoader(
             ds, batch_size=batch_size, pin_memory=True, num_workers=num_workers
         )
@@ -285,7 +389,8 @@ if __name__ == "__main__":
     if args.stage == "download":
         download()
     elif args.stage == "train_vocab":
-        train_vocab(vocab_size=args.vocab_size)
+    
+        train_vocab(vocab_size=args.vocab_size,additional_directory=f"{DATA_CACHE_DIR}/kinyastories")
     elif args.stage == "pretokenize":
         pretokenize(vocab_size=args.vocab_size)
     else:
