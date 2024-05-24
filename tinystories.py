@@ -36,7 +36,7 @@ nltk.download('words')
 DATA_CACHE_DIR = "data"
 common_english_words = set(words.words())
 # Define a regex pattern that keeps only English letters, numbers, basic punctuation, and spaces
-pattern = re.compile(r"[^a-zA-Z0-9\s\.,!?;:()\'\"\-\—]")
+pattern = re.compile("[^a-zA-Z0-9\s\.,!?;:()\'\"\-\—]")
 def download_file(url: str, fname: str, chunk_size=1024):
     """Helper function to download a file from a given url"""
     resp = requests.get(url, stream=True)
@@ -126,6 +126,12 @@ def train_vocab(vocab_size, additional_directory=None):
             text = pattern.sub('', text)
             # Filter out common English words and join the rest
             text = ' '.join([word for word in text.split() if word not in common_english_words])
+             # Remove URLs
+            text = re.sub(r'http\S+|www\S+|https\S+', '', text, flags=re.MULTILINE)
+            # Remove HTML tags
+            text = re.sub(r'<.*?>', '', text)
+            # Remove special characters like #, @
+            text = re.sub(r'[@#]', '', text)
             temp_f.write(text + '\n')
 
         for data in additional_data:
@@ -133,6 +139,12 @@ def train_vocab(vocab_size, additional_directory=None):
             text = str(data).strip()
             text = pattern.sub('', text)
             text = ' '.join([word for word in text.split() if word not in common_english_words])
+             # Remove URLs
+            text = re.sub(r'http\S+|www\S+|https\S+', '', text, flags=re.MULTILINE)
+            # Remove HTML tags
+            text = re.sub(r'<.*?>', '', text)
+            # Remove special characters like #, @
+            text = re.sub(r'[@#]', '', text)
             temp_f.write(text + '\n')
 
     # Train the sentencepiece model using the temporary text file
@@ -201,6 +213,12 @@ def process_shard(json_file, vocab_size,additional_directory=None):
     for i, story in enumerate(stories):
         text = story["story_text"]
         text = text.strip()  # get rid of leading/trailing whitespace
+         # Remove URLs
+        text = re.sub(r'http\S+|www\S+|https\S+', '', text, flags=re.MULTILINE)
+        # Remove HTML tags
+        text = re.sub(r'<.*?>', '', text)
+        # Remove special characters like #, @
+        text = re.sub(r'[@#]', '', text)
         text = pattern.sub('', text)
         text = ' '.join([word for word in text.split() if word not in common_english_words])
         tokens = enc.encode(text, bos=True, eos=False)  # encode the text, use BOS
@@ -213,6 +231,13 @@ def process_shard(json_file, vocab_size,additional_directory=None):
         for text in additional_data:
             text = pattern.sub('', str(text))
             text = ' '.join([word for word in text.split() if word not in common_english_words])
+             # Remove URLs
+            text = re.sub(r'http\S+|www\S+|https\S+', '', text, flags=re.MULTILINE)
+            # Remove HTML tags
+            text = re.sub(r'<.*?>', '', text)
+            # Remove special characters like #, @
+            text = re.sub(r'[@#]', '', text)
+            
             tokens = enc.encode(str(text), bos=True, eos=False)
             all_tokens.extend(tokens)
         
