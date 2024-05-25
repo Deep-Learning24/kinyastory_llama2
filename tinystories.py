@@ -289,7 +289,26 @@ class PretokDataset(IterableDataset):
         self.max_seq_len = max_seq_len
         self.vocab_size = vocab_size
         self.vocab_source = vocab_source
+    
+    @staticmethod
+    def get_num_samples(split, max_seq_len, vocab_size, vocab_source):
+        if vocab_source == "llama2":
+            bin_dir = os.path.join(DATA_CACHE_DIR, "tok4096")
+        elif vocab_source == "custom":
+            bin_dir = os.path.join(DATA_CACHE_DIR, f"tok{vocab_size}")
+        shard_filenames = sorted(glob.glob(os.path.join(bin_dir, "*.bin")))
 
+        total_samples = 0
+        for shard in shard_filenames:
+            shard_size = os.path.getsize(shard)
+            num_samples = shard_size // (max_seq_len * 2)  # 2 bytes per uint16 token
+            total_samples += num_samples
+
+        if split == "val":
+            total_samples = int(total_samples * 0.1)  # 10% for validation
+
+        return total_samples
+    
     def __iter__(self):
         # Get worker info within a DataLoader
         worker_info = torch.utils.data.get_worker_info()
@@ -388,6 +407,10 @@ class Task:
             x = x.to(device, non_blocking=True)
             y = y.to(device, non_blocking=True)
             yield x, y
+    @staticmethod
+    def get_train_dataset_size(**dataset_kwargs):
+        return PretokDataset.get_num_samples(**dataset_kwargs)
+        
 
 # -----------------------------------------------------------------------------
 # CLI for constructing the dataset
