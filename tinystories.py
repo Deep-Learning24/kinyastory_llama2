@@ -371,6 +371,101 @@ class PretokDataset(IterableDataset):
                     y = chunk[1:]
                     yield x, y
 
+                    
+
+class FinetuningDataPreprocessor:
+    def __init__(self):
+        pass
+    def generate_flan_examples(self, story_text: str, prompt_preambles: list) -> list:
+        return [f"{prompt_preamble} : {story_text}" for prompt_preamble in prompt_preambles]
+    
+    def clean_text(self, text: str) -> str:
+        # Remove URLs
+        text = re.sub(r'http\S+|www\S+|https\S+', '', text, flags=re.MULTILINE)
+        # Remove HTML tags
+        text = re.sub(r'<.*?>', '', text)
+        # Remove special characters like #, @
+        text = re.sub(r'[@#]', '', text)
+        # Remove other unwanted patterns
+        text = re.sub(r'[^A-Za-z0-9\s]', '', text)
+        # Remove common English words
+        text = ' '.join([word for word in text.split() if word.lower() not in common_english_words])
+        return text.strip()
+    
+    def prepare_flan_dataset(self, json_file: str) -> list:
+        print("Preparing the flan dataset examples")
+        
+        with open(json_file, "r") as f:
+            stories = json.load(f)
+        
+        prompt_preambles = [
+            "ncira umugani aho", "ncir'umugani aho", "ncir'umugan'aho", "ncir'umugani aho",
+            "ncira umugani wa", "ncir'umugani wa", "ncir'umugani wa", "ncir'umugani wa",
+            "ncir'umugani aho", "ncira umugani w", "ncir'umugani w", "ncir'umugani w",
+            "ncir'umugani w", "mbwira inkuru ya", "mbwira'inkuru ya", "mbwira inkuru y", "mbwira'inkuru y"
+        ]
+        
+        generated_dataset = []
+        for i, story in enumerate(stories):
+            story_context = f"{story['story_title']} ,{story['themes']}"
+            story_text = f"{story_context} : inkuru: {story['story_text']}"
+            story_text = self.clean_text(story_text)
+            
+            generated_dataset.extend(self.generate_flan_examples(story_text, prompt_preambles))
+        
+        return generated_dataset
+    
+    def save_generated_dataset(self, generated_dataset: list, output_file: str):
+        with open(output_file, "w") as f:
+            json.dump(generated_dataset, f, ensure_ascii=False, indent=4)
+        print(f"Generated dataset saved to {output_file}")
+    
+    
+    def tokenize_flan_dataset(self,json_file,vocab_size):
+        
+        tokenizer_model = get_tokenizer_model_path(vocab_size)
+        enc = Tokenizer(tokenizer_model)
+        
+        all_tokens=[]
+        generated_dataset = self.prepare_flan_dataset(json_file)
+        self.save_generated_dataset(generated_dataset,  os.path.join(DATA_CACHE_DIR, "flan_stories.json"))
+        
+        for story in generated_dataset:
+            tokens = enc.encode(str(story), bos=True, eos=False)
+            all_tokens.extend(tokens)
+            
+        # convert to uint16 nparray
+        all_tokens = np.array(all_tokens, dtype=np.uint16)
+        
+            # calculate the output filename
+        if vocab_size == 0:
+            # if we're using Llama 2, just save the tokenized file in the same dir
+            tokenized_filename = os.path.join(DATA_CACHE_DIR, "flan_stories.bin")
+        else:
+            # save .bin files into a new tok{N} directory
+            bin_dir = os.path.join(DATA_CACHE_DIR, f"flan{vocab_size}")
+            os.makedirs(bin_dir, exist_ok=True)
+            tokenized_filename = os.path.join(bin_dir, "flan_stories.bin")
+        # write the bytes
+        with open(tokenized_filename, "wb") as f:
+            f.write(all_tokens.tobytes())
+        # calculate the average sequence length (they are separated by BOS=1)
+        avg_seq_len = all_tokens.size / ((all_tokens == 1).sum())
+        print(f"Saved {tokenized_filename}, average seqlen: {avg_seq_len:.2f}")
+
+        
+        
+def pretokenize_flan_dataset(vocab_size):
+    """
+    Tokenizes each story in the TinyStories dataset.
+    The tokenized files will be saved in the corresponding tok{N} directories,
+    where N is the vocab size.
+    """
+    # Define the input JSON file containing stories
+    json_file = os.path.join(DATA_CACHE_DIR, "Kinyastories.json")
+    finetuningDataPreprocessor = FinetuningDataPreprocessor()
+    finetuningDataPreprocessor.tokenize_flan_dataset(json_file,vocab_size)
+    
 
 # -----------------------------------------------------------------------------
 # public interface functions
@@ -410,6 +505,7 @@ class Task:
     @staticmethod
     def get_train_dataset_size(**dataset_kwargs):
         return PretokDataset.get_num_samples(**dataset_kwargs)
+    
         
 
 # -----------------------------------------------------------------------------
@@ -429,7 +525,7 @@ if __name__ == "__main__":
     python tinystories.py pretokenize --vocab_size=2048
     """
     parser = argparse.ArgumentParser()
-    parser.add_argument("stage", type=str, choices=["download", "pretokenize", "train_vocab"])
+    parser.add_argument("stage", type=str, choices=["download", "pretokenize", "train_vocab","pretokenize_flan"])
     parser.add_argument("--vocab_size", type=int, default=0, help="pretokenization vocab size. 0 = use Llama 2 tokenizer.")
     args = parser.parse_args()
 
@@ -441,5 +537,7 @@ if __name__ == "__main__":
         train_vocab(vocab_size=args.vocab_size,additional_directory=f"{DATA_CACHE_DIR}/kinyastories")
     elif args.stage == "pretokenize":
         pretokenize(vocab_size=args.vocab_size)
+    elif args.stage == "pretokenize_flan":
+        pretokenize_flan_dataset(vocab_size=args.vocab_size)
     else:
         raise ValueError(f"Unknown stage {args.stage}")
