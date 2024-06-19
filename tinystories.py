@@ -296,7 +296,13 @@ class PretokDataset(IterableDataset):
             bin_dir = os.path.join(DATA_CACHE_DIR, "tok4096")
         elif vocab_source == "custom":
             bin_dir = os.path.join(DATA_CACHE_DIR, f"tok{vocab_size}")
+        
+        elif vocab_source == "flan_dataset":
+            bin_dir = os.path.join(DATA_CACHE_DIR, f"flan{vocab_size}")
+        
         shard_filenames = sorted(glob.glob(os.path.join(bin_dir, "*.bin")))
+        
+            
 
         total_samples = 0
         for shard in shard_filenames:
@@ -326,6 +332,9 @@ class PretokDataset(IterableDataset):
             shard_filenames = sorted(glob.glob(os.path.join(bin_dir, "*.bin")))
         elif self.vocab_source == "custom":
             bin_dir = os.path.join(DATA_CACHE_DIR, f"tok{self.vocab_size}")
+            shard_filenames = sorted(glob.glob(os.path.join(bin_dir, "*.bin")))
+        elif self.vocab_source == "flan_dataset":
+            bin_dir = os.path.join(DATA_CACHE_DIR, f"flan{self.vocab_size}")
             shard_filenames = sorted(glob.glob(os.path.join(bin_dir, "*.bin")))
         
         print("Shared files: ", shard_filenames)

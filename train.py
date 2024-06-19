@@ -31,6 +31,8 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from tinystories import Task
 from export import model_export
 from tqdm import tqdm
+from peft import get_peft_model, LoraConfig
+import transformers
 
 
 def load_available_checkpoints(checkpoint_dir, model, optimizer, location):
@@ -85,6 +87,7 @@ out_dir = "out"
 eval_interval = 1000
 log_interval = 1
 eval_iters = 100
+is_peft_finetuning=True
 eval_only = False  # if True, script exits right after the first eval
 always_save_checkpoint = False  # if True, always save a checkpoint after each eval
 init_from = "resume"  # 'scratch' or 'resume'
@@ -134,8 +137,8 @@ lr_decay_iters = max_iters  # should be ~= max_iters per Chinchilla
 min_lr = 0.0  # minimum learning rate, should be ~= learning_rate/10 per Chinchilla
 
 # validating checks
-assert vocab_source in ["llama2", "custom"]
-assert vocab_source == "custom" or vocab_size == 32000, "The vocab from Meta has 32K tokens"
+assert vocab_source in ["llama2", "custom","flan_dataset"]
+assert vocab_source == "custom" or  vocab_source == "flan_dataset" or vocab_size == 32000, "The vocab from Meta has 32K tokens"
 
 # various inits, derived attributes, I/O setup
 ddp = int(os.environ.get("RANK", -1)) != -1  # is this a ddp run?
@@ -311,6 +314,38 @@ def get_lr(it):
     coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))  # coeff ranges 0..1
     return min_lr + coeff * (learning_rate - min_lr)
 
+#Apply PEFT finetuning
+# Print the layers in the base model
+# print("Base model layers:")
+# for name, param in model.named_parameters():
+#     print(name)
+def get_target_modules(model):
+    modules = []
+    for name, module in model.named_modules():
+        if isinstance(module, (torch.nn.Linear, torch.nn.Embedding, torch.nn.Conv2d, transformers.pytorch_utils.Conv1D)):
+            modules.append(name)
+    return modules
+
+target_modules = get_target_modules(model)
+print("Modules to finetune: ", target_modules)
+
+
+# Check if PEFT finetuning is enabled
+if is_peft_finetuning:
+    def train_peft(pretrained_model):
+        # Define LoRA configuration for PEFT
+        peft_config = LoraConfig(
+            r=8,                # Low-rank dimension
+            lora_alpha=32,      # Scaling parameter
+            lora_dropout=0.1,   # Dropout rate
+            bias="none",         # Bias setting
+            target_modules=target_modules
+        )
+        # Apply PEFT to the model
+        return get_peft_model(pretrained_model, peft_config)
+    
+    model = train_peft(model)
+
 # logging
 if wandb_log and master_process:
     import wandb
@@ -364,8 +399,15 @@ with tqdm(total=max_iters, desc="Training") as pbar:
                         "config": config,
                     }
                     print(f"saving checkpoint to {out_dir}")
-                    torch.save(checkpoint, os.path.join(out_dir, "ckpt.pt"))
-                    model_export(raw_model, os.path.join(out_dir, "model.bin"), version=0)
+                    if is_peft_finetuning:
+                        print("Saving PEFT finetuned model")
+                        torch.save(checkpoint, os.path.join(out_dir, "peft_ckpt.pt"))
+                        model_export(raw_model, os.path.join(out_dir, "peft_model.bin"), version=0)
+                    else:
+                        print("Saving pretrained model")
+                        torch.save(checkpoint, os.path.join(out_dir, "ckpt.pt"))
+                        model_export(raw_model, os.path.join(out_dir, "model.bin"), version=0)
+                        
         if iter_num == 0 and eval_only:
             break
 
