@@ -13,6 +13,25 @@
     #include <unistd.h>
     #include <sys/mman.h>
 #endif
+
+
+// Function to calculate BLEU score
+float calculate_bleu(const char* reference_text, const char* generated_text);
+
+// Function to compute precision for n-grams
+float compute_precision(const char* reference_text, const char* generated_text, int n);
+
+// Function to check if an n-gram exists in the reference text
+int contains_ngram(const char* reference_text, const char* ngram, int n);
+
+// Function to compute brevity penalty
+float brevity_penalty(const char* reference_text, const char* generated_text);
+
+// Add function prototypes at the beginning of the file
+float calculate_rouge(const char* reference_text, const char* generated_text);
+char** split_text_into_words(const char* text, int* word_count);
+
+// Rest of your code, including the definitions of calculate_rouge and split_text_into_words
 // ----------------------------------------------------------------------------
 // Transformer model
 
@@ -743,7 +762,10 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
     long start = 0;  // used to time our code, only initialized after first iteration
     int next;        // will store the next token in the sequence
     int token = prompt_tokens[0]; // kick off with the first token in the prompt
+    // create an empty string to store the generated text
+    char* generated_text = (char*)malloc(steps * sizeof(char));
     int pos = 0;     // position in the sequence
+    int gen_pos = 0; // Position in the generated text
     while (pos < steps) {
 
         // forward the transformer to get logits for the next token
@@ -756,6 +778,7 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
         } else {
             // otherwise sample the next token from the logits
             next = sample(sampler, logits);
+        
         }
         pos++;
 
@@ -764,6 +787,10 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
 
         // print the token as string, decode it with the Tokenizer object
         char* piece = decode(tokenizer, token, next);
+        // extend the piece tokens to the generated text
+        for (int i = 0; piece[i] != '\0'; i++) {
+            generated_text[gen_pos++] = piece[i];
+        }
         safe_printf(piece); // same as printf("%s", piece), but skips "unsafe" bytes
         fflush(stdout);
         token = next;
@@ -772,7 +799,12 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
         if (start == 0) { start = time_in_ms(); }
     }
     printf("\n");
+    // Calculate BLEU score
+    // float bleu_score = calculate_bleu(prompt, generated_text);
+    // Claculte ROUGE score
+    float rouge_score = calculate_rouge(prompt, generated_text);
 
+    //printf("BLEU Score: %.2f\n", bleu_score);
     // report achieved tok/s (pos-1 because the timer starts after first iteration)
     if (pos > 1) {
         long end = time_in_ms();
@@ -780,6 +812,7 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
     }
 
     free(prompt_tokens);
+    free(generated_text);
 }
 
 void read_stdin(const char* guide, char* buffer, size_t bufsize) {
@@ -882,6 +915,153 @@ void chat(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler,
     printf("\n");
     free(prompt_tokens);
 }
+// Function to free the words array
+void free_words_array(char** words, int word_count) {
+    for (int i = 0; i < word_count; i++) {
+        free(words[i]); // Free each word
+    }
+    free(words); // Free the array of words
+}
+
+float compute_recall(const char* reference_text, const char* generated_text, int n) {
+    int ref_word_count, gen_word_count;
+    char** ref_words = split_text_into_words(reference_text, &ref_word_count);
+    char** gen_words = split_text_into_words(generated_text, &gen_word_count);
+
+    int matching_ngrams = 0;
+    int total_reference_ngrams = ref_word_count - n + 1 > 0 ? ref_word_count - n + 1 : 0;
+
+    for (int i = 0; i <= ref_word_count - n; i++) {
+        int match_found = 0;
+        for (int j = 0; j <= gen_word_count - n && !match_found; j++) {
+            match_found = 1; // Assume match is found
+            for (int k = 0; k < n; k++) {
+                if (strcmp(ref_words[i + k], gen_words[j + k]) != 0) {
+                    match_found = 0; // No match
+                    break;
+                }
+            }
+            if (match_found) matching_ngrams++;
+        }
+    }
+
+    free_words_array(ref_words, ref_word_count);
+    free_words_array(gen_words, gen_word_count);
+
+    return total_reference_ngrams > 0 ? (float)matching_ngrams / total_reference_ngrams : 0;
+}
+
+float calculate_rouge(const char* reference_text, const char* generated_text) {
+    float recall1 = compute_recall(reference_text, generated_text, 1);
+    float recall2 = compute_recall(reference_text, generated_text, 2);
+    float recall3 = compute_recall(reference_text, generated_text, 3);
+    float recall4 = compute_recall(reference_text, generated_text, 4);
+    
+    // Example of calculating the simple average recall for ROUGE-N
+    float rouge = (recall1 + recall2 + recall3 + recall4) / 4;
+    
+    // Optionally, calculate F1 score here if you also compute precision
+    
+    return rouge;
+}
+
+// Function to split text into words, returns an array of words and updates the word count
+char** split_text_into_words(const char* text, int* word_count) {
+    char* text_copy = strdup(text); // Create a modifiable copy of the text
+    char** words = malloc(strlen(text) / 2 * sizeof(char*)); // Allocate space for words
+    *word_count = 0;
+    char* token = strtok(text_copy, " ");
+    while (token != NULL) {
+        words[(*word_count)++] = strdup(token); // Copy each word
+        token = strtok(NULL, " ");
+    }
+    free(text_copy); // Free the copy of the text
+    return words;
+}
+
+
+// Helper function to create n-grams from text
+char* create_ngram(const char* text, int start, int n) {
+    char* ngram = malloc(256); // Allocate enough space for the n-gram
+    ngram[0] = '\0'; // Initialize the string to be empty
+    int word_count = 0;
+    const char* token = strtok((char*)text + start, " ");
+    while (token != NULL && word_count < n) {
+        if (word_count > 0) strcat(ngram, " "); // Add space between words
+        strcat(ngram, token);
+        token = strtok(NULL, " ");
+        word_count++;
+    }
+    if (word_count < n) {
+        free(ngram);
+        return NULL; // Not enough words for an n-gram
+    }
+    return ngram;
+}
+
+float calculate_bleu(const char* reference_text, const char* generated_text) {
+    float precision1 = compute_precision(reference_text, generated_text, 1);
+    float precision2 = compute_precision(reference_text, generated_text, 2);
+    float precision3 = compute_precision(reference_text, generated_text, 3);
+    float precision4 = compute_precision(reference_text, generated_text, 4);
+    
+    float bleu = exp((log(precision1) + log(precision2) + log(precision3) + log(precision4)) / 4);
+    
+    float brevity = brevity_penalty(reference_text, generated_text);
+    
+    return bleu * brevity;
+}
+
+float compute_precision(const char* reference_text, const char* generated_text, int n) {
+    int ref_word_count, gen_word_count;
+    char** ref_words = split_text_into_words(reference_text, &ref_word_count);
+    char** gen_words = split_text_into_words(generated_text, &gen_word_count);
+
+    int matching_ngrams = 0;
+    int total_generated_ngrams = gen_word_count - n + 1 > 0 ? gen_word_count - n + 1 : 0;
+
+    printf("Reference words: %d\n", ref_word_count);
+    printf("Generated words: %d\n", gen_word_count);
+
+    for (int i = 0; i <= gen_word_count - n; i++) {
+        int match_found = 0;
+        for (int j = 0; j <= ref_word_count - n && !match_found; j++) {
+            match_found = 1; // Assume match is found
+            for (int k = 0; k < n; k++) {
+                if (strcmp(gen_words[i + k], ref_words[j + k]) != 0) {
+                    match_found = 0; // No match
+                    break;
+                }
+            }
+            if (match_found) matching_ngrams++;
+        }
+    }
+
+    free_words_array(ref_words, ref_word_count);
+    free_words_array(gen_words, gen_word_count);
+
+    return total_generated_ngrams > 0 ? (float)matching_ngrams / total_generated_ngrams : 0;
+}
+
+
+// Modified contains_ngram to correctly handle memory and logic
+int contains_ngram(const char* reference_text, const char* ngram, int n) {
+    if (strstr(reference_text, ngram) != NULL) {
+        return 1; // Found the n-gram in the reference text
+    }
+    return 0;
+}
+
+float brevity_penalty(const char* reference_text, const char* generated_text) {
+    int len_reference = strlen(reference_text);
+    int len_generated = strlen(generated_text);
+    
+    if (len_generated <= len_reference) {
+        return 1.0;
+    } else {
+        return exp(1 - (float)len_reference / len_generated);
+    }
+}
 
 
 // ----------------------------------------------------------------------------
@@ -900,6 +1080,9 @@ void error_usage() {
     fprintf(stderr, "  -z <string> optional path to custom tokenizer\n");
     fprintf(stderr, "  -m <string> mode: generate|chat, default: generate\n");
     fprintf(stderr, "  -y <string> (optional) system prompt in chat mode\n");
+    fprintf(stderr, "  -e <string> evaluation metric: bleu|rouge, default: rouge\n");
+
+
     exit(EXIT_FAILURE);
 }
 
@@ -915,6 +1098,10 @@ int main(int argc, char *argv[]) {
     unsigned long long rng_seed = 0; // seed rng with time by default
     char *mode = "generate";    // generate|chat
     char *system_prompt = NULL; // the (optional) system prompt to use in chat mode
+    char *evaluation_metric = "rouge"; // bleu|rouge
+    char generated_text[1024] = "";  
+    // check if needs to evaluate the generated text
+    int check_performance= 0;
 
     // poor man's C argparse so we can override the defaults above from the command line
     if (argc >= 2) { checkpoint_path = argv[1]; } else { error_usage(); }
@@ -923,8 +1110,13 @@ int main(int argc, char *argv[]) {
         if (i + 1 >= argc) { error_usage(); } // must have arg after flag
         if (argv[i][0] != '-') { error_usage(); } // must start with dash
         if (strlen(argv[i]) != 2) { error_usage(); } // must be -x (one dash, one letter)
+       
+    
         // read in the args
         if (argv[i][1] == 't') { temperature = atof(argv[i + 1]); }
+        else if (argv[i][1] == 'e') { evaluation_metric = argv[i + 1]; }
+        else if (argv[i][1] == 'g') { strcpy(generated_text, argv[i + 1]); }
+        else if (argv[i][1] == 'c') { check_performance = atof(argv[i + 1]); }
         else if (argv[i][1] == 'p') { topp = atof(argv[i + 1]); }
         else if (argv[i][1] == 's') { rng_seed = atoi(argv[i + 1]); }
         else if (argv[i][1] == 'n') { steps = atoi(argv[i + 1]); }
@@ -953,8 +1145,9 @@ int main(int argc, char *argv[]) {
     // build the Sampler
     Sampler sampler;
     build_sampler(&sampler, transformer.config.vocab_size, temperature, topp, rng_seed);
-
-    // run!
+    
+    if(check_performance == 0){
+ // run!
     if (strcmp(mode, "generate") == 0) {
         generate(&transformer, &tokenizer, &sampler, prompt, steps);
     } else if (strcmp(mode, "chat") == 0) {
@@ -963,6 +1156,21 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "unknown mode: %s\n", mode);
         error_usage();
     }
+    }
+   
+    if(check_performance == 1){
+        if(strcmp(evaluation_metric, "bleu") == 0) {
+        float bleu_score = calculate_bleu(prompt, generated_text);
+        printf("BLEU Score: %.2f\n", bleu_score);
+    } else if(strcmp(evaluation_metric, "rouge") == 0) {
+        float rouge_score = calculate_rouge(prompt, generated_text);
+        printf("ROUGE Score: %.2f\n", rouge_score);
+    } else {
+        fprintf(stderr, "unknown evaluation metric: %s\n", evaluation_metric);
+        error_usage();
+    }
+    }
+    
 
     // memory and file handles cleanup
     free_sampler(&sampler);

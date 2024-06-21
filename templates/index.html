@@ -110,9 +110,8 @@
                     lazyType(response.output, $('.generated-text').last());
                     // Append perplexity
                     setTimeout(function() {
-                        $('#output').append('<div class="perplexity">Perplexity: ' + response.perplexity.toFixed(2) + '</div>');
-                        // Append BLEU score
-                        $('#output').append('<div class="bleu-score">BLEU Score: ' + response.bleu_score.toFixed(2) + '</div>');
+                        $('#output').append('<div class="perplexity"> ' + response.eval_result + '</div>');
+
                     }, response.output.length * 50); // Delay showing perplexity and BLEU score after typing
                     $('#prompt').val('');
                     $('#userPrompt').appendTo('body'); // Move the userPrompt div below the output
