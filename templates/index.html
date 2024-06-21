@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kinya Llama2</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        h1 {
+            font-size: 24px;
+            text-align: center;
+        }
+
+        textarea {
+            width: 100%;
+            height: 100px;
+            margin-bottom: 10px;
+            padding: 10px;
+            border-radius: 5px;
+            border: 1px solid #ccc;
+            resize: none;
+        }
+
+        button {
+            padding: 10px 20px;
+            margin-top: 10px;
+            background-color: #007bff;
+            color: #fff;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+
+        button:hover {
+            background-color: #0056b3;
+        }
+
+        .output-container {
+            background-color: #f0f0f0;
+            padding: 10px;
+            margin-top: 20px;
+            border-radius: 5px;
+        }
+
+        .chat-entry {
+            margin-bottom: 10px;
+        }
+
+        .user {
+            color: blue;
+        }
+
+        .generator {
+            color: green;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            margin-top: 20px;
+            font-weight: bold;
+            color: #777;
+        }
+
+        .generated-text {
+            display: inline-block;
+        }
+    </style>
+</head>
+<body>
+    <h1>Kinya Llama2</h1>
+    <div class="output-container" id="output"></div>
+    <div id="userPrompt">
+        <textarea id="prompt" placeholder="Enter your prompt here..."></textarea>
+        <button onclick="generateText()">Generate</button>
+    </div>
+    <div class="loading" id="loadingIndicator">Generating...</div>
+
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script>
+        function generateText() {
+            const prompt = $('#prompt').val();
+            const previousOutput = $('#output').html();
+            const data = {
+                prompt: prompt,
+                mode: 'generate', // Always use 'generate' mode
+                previous_output: previousOutput
+            };
+
+            $('#loadingIndicator').show(); // Show loading indicator
+
+            $.ajax({
+                url: '/generate',
+                method: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify(data),
+                success: function(response) {
+                    // Append user prompt
+                    $('#output').append('<div class="chat-entry user"><strong>User:</strong> ' + prompt + '</div>');
+                    // Append generated text
+                    $('#output').append('<div class="chat-entry generator"><strong>Kinya Llama2 Generator:</strong> <span class="generated-text"></span></div>');
+                    // Start lazy typing
+                    lazyType(response.output, $('.generated-text').last());
+                    // Append perplexity
+                    setTimeout(function() {
+                        $('#output').append('<div class="perplexity">Perplexity: ' + response.perplexity.toFixed(2) + '</div>');
+                        // Append BLEU score
+                        $('#output').append('<div class="bleu-score">BLEU Score: ' + response.bleu_score.toFixed(2) + '</div>');
+                    }, response.output.length * 50); // Delay showing perplexity and BLEU score after typing
+                    $('#prompt').val('');
+                    $('#userPrompt').appendTo('body'); // Move the userPrompt div below the output
+                    $('#loadingIndicator').hide(); // Hide loading indicator after generation
+                },
+                error: function(xhr, status, error) {
+                    $('#output').text('Error: ' + error);
+                    $('#loadingIndicator').hide(); // Hide loading indicator in case of error
+                }
+            });
+            
+        }
+
+        function lazyType(text, outputSpan) {
+            var index = 0;
+            var typingInterval = setInterval(function() {
+                outputSpan.append(text[index]);
+                index++;
+                if (index >= text.length) {
+                    clearInterval(typingInterval);
+                }
+            }, 50); // Adjust the typing speed as needed (milliseconds per character)
+        }
+    </script>
+</body>
+</html>

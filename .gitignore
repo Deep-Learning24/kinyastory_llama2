@@ -1,3 +1,7 @@
 .vscode
 *.bin
 *.lock
+kinyallama/*
+/kinyallama
+
+

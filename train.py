@@ -84,12 +84,12 @@ def load_available_checkpoints(checkpoint_dir, model, optimizer, location):
 # -----------------------------------------------------------------------------
 # I/O
 out_dir = "out"
-eval_interval = 1000
+eval_interval = 5
 log_interval = 1
 eval_iters = 100
 is_peft_finetuning=True
 eval_only = False  # if True, script exits right after the first eval
-always_save_checkpoint = False  # if True, always save a checkpoint after each eval
+always_save_checkpoint = True  # if True, always save a checkpoint after each eval
 init_from = "resume"  # 'scratch' or 'resume'
 # wandb logging
 wandb_log = False  # disabled by default
@@ -198,7 +198,7 @@ total_samples = Task.get_train_dataset_size(**dataset_kwargs)
 num_batches_per_epoch = total_samples // batch_size
 
 # Set the eval_interval to the number of batches per epoch
-eval_interval = batch_size
+eval_interval = num_batches_per_epoch//10
 
 print(f"The evaluation interval time will be {eval_interval}")
 # task-specific setup
@@ -257,10 +257,15 @@ elif init_from == "resume":
     model.load_state_dict(state_dict)
     iter_num = checkpoint["iter_num"]
     best_val_loss = checkpoint["best_val_loss"]
+    if is_peft_finetuning:
+         best_val_loss = torch.load(os.path.join(out_dir, "peft_ckpt.pt"), map_location=device)["best_val_loss"]
+    print("Best previous loss is: ",best_val_loss)
+        
 model.to(device)
 
 # initialize a GradScaler. If enabled=False scaler is a no-op
-scaler = torch.cuda.amp.GradScaler(enabled=(dtype == "float16"))
+# scaler = torch.cuda.amp.GradScaler(enabled=(dtype == "float16"))
+scaler = torch.cuda.amp.GradScaler(enabled=False)
 
 # optimizer
 optimizer = model.configure_optimizers(weight_decay, learning_rate, (beta1, beta2), device_type)
