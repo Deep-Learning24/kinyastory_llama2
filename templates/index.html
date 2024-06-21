@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kinya Llama2 Text Generation</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+        textarea { width: 100%; height: 100px; }
+        #output { white-space: pre-wrap; background-color: #f0f0f0; padding: 10px; margin-top: 20px; }
+    </style>
+</head>
+<body>
+    <h1>Llama2 Text Generation</h1>
+    <textarea id="prompt" placeholder="Enter your prompt here..."></textarea>
+    <button onclick="generateText()">Generate</button>
+    <div id="output"></div>
+
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script>
+        function generateText() {
+            var prompt = $('#prompt').val();
+            $.ajax({
+                url: '/generate',
+                method: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify({prompt: prompt}),
+                success: function(response) {
+                    $('#output').text(response.generated_text);
+                }
+            });
+        }
+    </script>
+</body>
+</html>
